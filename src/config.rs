@@ -32,7 +32,7 @@ impl Default for Config {
         Self {
             ping_key: 0x56,
             quick_key: 0x31,
-            menu_key: 0x75,
+            menu_key: 0x76,
             game_interact_key: 0x45,
             game_use_key: 0x52,
             marker_enabled: true,

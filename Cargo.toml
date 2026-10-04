@@ -10,6 +10,7 @@ crate-type = ["cdylib"]
 eldenring = { git = "https://github.com/vswarte/fromsoftware-rs", rev = "59fbd3b3b7daaf14aca47c9f73530493dba6bc79" }
 fromsoftware-shared = { git = "https://github.com/vswarte/fromsoftware-rs", rev = "59fbd3b3b7daaf14aca47c9f73530493dba6bc79" }
 hudhook = { version = "0.9.3", default-features = false, features = ["dx12"] }
+ilhook = { version = "2.3.0", features = ["x64"] }
 
 [profile.release]
 opt-level = 2

@@ -192,6 +192,9 @@ impl Game {
         let cfg = shared().cfg.clone();
         self.injector.tick(now);
         self.save_if_dirty(now);
+        if MENU_OPEN.load(Ordering::Relaxed) {
+            input::hold_game_input();
+        }
 
         let chr_man = unsafe { WorldChrMan::instance() }.ok();
         let player = chr_man.and_then(|w| w.main_player.as_ref()).map(|p| &**p);

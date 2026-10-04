@@ -1,21 +1,15 @@
 use std::{
     collections::VecDeque,
-    ffi::c_void,
-    sync::atomic::{AtomicUsize, Ordering},
+    sync::atomic::{AtomicBool, Ordering},
     time::{Duration, Instant},
 };
 
+use eldenring::fd4::FD4PadManager;
+use fromsoftware_shared::FromStatic;
 use hudhook::windows::{
     Win32::{
-        Devices::HumanInterfaceDevice::{
-            DirectInput8Create, GUID_SysKeyboard, IDirectInput8A, IDirectInput8W,
-            IDirectInputDevice8A, IDirectInputDevice8W,
-        },
-        Foundation::HINSTANCE,
-        System::{
-            LibraryLoader::GetModuleHandleW,
-            Memory::{PAGE_PROTECTION_FLAGS, PAGE_READWRITE, VirtualProtect},
-        },
+        Devices::HumanInterfaceDevice::{GUID_SysKeyboard, GUID_SysMouse, IDirectInput8W},
+        System::LibraryLoader::{GetModuleHandleW, GetProcAddress},
         UI::{
             Input::KeyboardAndMouse::{
                 GetAsyncKeyState, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_EXTENDEDKEY,
@@ -23,12 +17,14 @@ use hudhook::windows::{
                 VIRTUAL_KEY,
             },
             WindowsAndMessaging::{
-                CURSORINFO, GetCursorInfo, GetForegroundWindow, GetWindowThreadProcessId,
+                CURSORINFO, ClipCursor, GetCursorInfo, GetForegroundWindow,
+                GetWindowThreadProcessId,
             },
         },
     },
-    core::Interface,
+    core::{GUID, Interface, s, w},
 };
+use ilhook::x64::{CallbackOption, HookFlags, Registers, hook_closure_retn};
 
 use crate::{logf, state::MENU_OPEN};
 
@@ -164,142 +160,126 @@ fn send_key(vk: u16, up: bool) {
     unsafe { SendInput(&[input], size_of::<INPUT>() as i32) };
 }
 
-// --- DirectInput: hide keyboard and mouse from the game while the settings window is open ---
+// --- Input block: nothing reaches the game while the settings window is open ---
 
-type GetDeviceStateFn = unsafe extern "system" fn(*mut c_void, u32, *mut c_void) -> i32;
-type GetDeviceDataFn =
-    unsafe extern "system" fn(*mut c_void, u32, *mut c_void, *mut u32, u32) -> i32;
+/// Tells the game it is in the background, which makes it skip keyboard, mouse and pad input.
+/// The game clears the flags by itself one frame after the last call, so nothing has to be
+/// restored when the window closes.
+pub fn hold_game_input() {
+    if let Ok(pad) = unsafe { FD4PadManager::instance_mut() } {
+        pad.exit_foreground_signaled = true;
+        pad.is_back_ground_window = true;
+    }
+}
 
-const SLOT_GET_DEVICE_STATE: usize = 9;
-const SLOT_GET_DEVICE_DATA: usize = 10;
+/// The game clips the cursor to its window while playing; the settings window needs it free.
+pub fn release_cursor() {
+    let _ = unsafe { ClipCursor(None) };
+}
 
-// Index 0: ANSI device vtable, 1: Unicode device vtable.
-static ORIG_STATE: [AtomicUsize; 2] = [AtomicUsize::new(0), AtomicUsize::new(0)];
-static ORIG_DATA: [AtomicUsize; 2] = [AtomicUsize::new(0), AtomicUsize::new(0)];
+const DIRECTINPUT_VERSION: u32 = 0x0800;
+const VTBL_RELEASE: usize = 2;
+const VTBL_CREATE_DEVICE: usize = 3;
+const VTBL_GET_DEVICE_STATE: usize = 9;
 
-unsafe extern "system" fn get_device_state_hook<const N: usize>(
-    this: *mut c_void,
-    size: u32,
-    data: *mut c_void,
-) -> i32 {
-    let orig: GetDeviceStateFn =
-        unsafe { std::mem::transmute(ORIG_STATE[N].load(Ordering::Relaxed)) };
-    let hr = unsafe { orig(this, size, data) };
-    if hr >= 0 && !data.is_null() && MENU_OPEN.load(Ordering::Relaxed) {
-        unsafe { std::ptr::write_bytes(data as *mut u8, 0, size as usize) };
+type RawObj = *mut *const usize;
+type DInput8CreateFn =
+    unsafe extern "system" fn(usize, u32, *const GUID, *mut RawObj, usize) -> i32;
+type CreateDeviceFn = unsafe extern "system" fn(RawObj, *const GUID, *mut RawObj, usize) -> i32;
+type ReleaseFn = unsafe extern "system" fn(RawObj) -> u32;
+type GetDeviceStateFn = unsafe extern "system" fn(u64, u64, u64) -> usize;
+
+static HOOK_SEEN: AtomicBool = AtomicBool::new(false);
+
+/// Address of the real `GetDeviceState` behind a throwaway device of the given kind.
+unsafe fn probe_get_device_state(
+    create: DInput8CreateFn,
+    hinstance: usize,
+    guid: &GUID,
+) -> Option<usize> {
+    unsafe {
+        let mut di8: RawObj = std::ptr::null_mut();
+        let hr = create(hinstance, DIRECTINPUT_VERSION, &IDirectInput8W::IID, &mut di8, 0);
+        if hr != 0 || di8.is_null() {
+            logf!("dinput: DirectInput8Create failed: {hr:#010x}");
+            return None;
+        }
+        let release_di8: ReleaseFn = std::mem::transmute(*(*di8).add(VTBL_RELEASE));
+        let create_device: CreateDeviceFn = std::mem::transmute(*(*di8).add(VTBL_CREATE_DEVICE));
+
+        let mut device: RawObj = std::ptr::null_mut();
+        let hr = create_device(di8, guid, &mut device, 0);
+        if hr != 0 || device.is_null() {
+            logf!("dinput: CreateDevice failed: {hr:#010x}");
+            release_di8(di8);
+            return None;
+        }
+        let addr = *(*device).add(VTBL_GET_DEVICE_STATE);
+        let release_device: ReleaseFn = std::mem::transmute(*(*device).add(VTBL_RELEASE));
+        release_device(device);
+        release_di8(di8);
+        Some(addr)
+    }
+}
+
+// IDirectInputDevice8::GetDeviceState(cbData, lpvData): rcx = this, rdx = cbData, r8 = lpvData
+fn get_device_state_hook(reg: *mut Registers, original: usize) -> usize {
+    let (this, size, data) = unsafe { ((*reg).rcx, (*reg).rdx, (*reg).r8) };
+    let original: GetDeviceStateFn = unsafe { std::mem::transmute(original) };
+    let hr = unsafe { original(this, size, data) };
+    // 256 = keyboard state, 16 / 20 = DIMOUSESTATE / DIMOUSESTATE2; other devices are left alone
+    let size = size as u32 as usize;
+    if hr as u32 == 0 && data != 0 && matches!(size, 256 | 16 | 20) && MENU_OPEN.load(Ordering::Relaxed) {
+        unsafe { std::ptr::write_bytes(data as *mut u8, 0, size) };
+        if !HOOK_SEEN.swap(true, Ordering::Relaxed) {
+            logf!("dinput: the game reads devices through the hooked GetDeviceState");
+        }
     }
     hr
 }
 
-unsafe extern "system" fn get_device_data_hook<const N: usize>(
-    this: *mut c_void,
-    object_size: u32,
-    objects: *mut c_void,
-    in_out: *mut u32,
-    flags: u32,
-) -> i32 {
-    let orig: GetDeviceDataFn =
-        unsafe { std::mem::transmute(ORIG_DATA[N].load(Ordering::Relaxed)) };
-    let hr = unsafe { orig(this, object_size, objects, in_out, flags) };
-    if hr >= 0 && !in_out.is_null() && MENU_OPEN.load(Ordering::Relaxed) {
-        unsafe { *in_out = 0 };
-    }
-    hr
-}
-
-fn is_our_hook(addr: usize) -> bool {
-    addr == get_device_state_hook::<0> as *const () as usize
-        || addr == get_device_state_hook::<1> as *const () as usize
-        || addr == get_device_data_hook::<0> as *const () as usize
-        || addr == get_device_data_hook::<1> as *const () as usize
-}
-
-/// Replaces one vtable entry. The original goes into `orig` before the swap so the hook never
-/// runs without it.
-unsafe fn patch_slot(vtable: *mut usize, slot: usize, hook: usize, orig: &AtomicUsize) -> bool {
-    unsafe {
-        let entry = vtable.add(slot);
-        let current = entry.read();
-        if is_our_hook(current) {
-            return true;
-        }
-        let mut old = PAGE_PROTECTION_FLAGS(0);
-        if VirtualProtect(entry as *const c_void, 8, PAGE_READWRITE, &mut old).is_err() {
-            return false;
-        }
-        orig.store(current, Ordering::SeqCst);
-        entry.write(hook);
-        let mut tmp = PAGE_PROTECTION_FLAGS(0);
-        let _ = VirtualProtect(entry as *const c_void, 8, old, &mut tmp);
-        true
-    }
-}
-
-unsafe fn patch_device(raw: *mut c_void, n: usize) -> bool {
-    unsafe {
-        let vtable = *(raw as *const *mut usize);
-        let (state, data) = if n == 0 {
-            (
-                get_device_state_hook::<0> as *const () as usize,
-                get_device_data_hook::<0> as *const () as usize,
-            )
-        } else {
-            (
-                get_device_state_hook::<1> as *const () as usize,
-                get_device_data_hook::<1> as *const () as usize,
-            )
-        };
-        patch_slot(vtable, SLOT_GET_DEVICE_STATE, state, &ORIG_STATE[n])
-            && patch_slot(vtable, SLOT_GET_DEVICE_DATA, data, &ORIG_DATA[n])
-    }
-}
-
-/// Creates throwaway keyboard devices to reach the device vtables inside dinput8.dll and patches
-/// GetDeviceState/GetDeviceData there. Every device of the process shares those vtables.
+/// Hooks the code of `GetDeviceState` for the system keyboard and mouse, so every device of the
+/// process is covered no matter which vtable it was created with.
 pub fn install_dinput_block() {
-    let hinst: HINSTANCE = match unsafe { GetModuleHandleW(None) } {
-        Ok(h) => h.into(),
+    let create: DInput8CreateFn = unsafe {
+        let Ok(dinput8) = GetModuleHandleW(w!("dinput8.dll")) else {
+            logf!("dinput: dinput8.dll is not loaded");
+            return;
+        };
+        let Some(f) = GetProcAddress(dinput8, s!("DirectInput8Create")) else {
+            logf!("dinput: DirectInput8Create not found");
+            return;
+        };
+        std::mem::transmute(f)
+    };
+    let hinstance = match unsafe { GetModuleHandleW(None) } {
+        Ok(h) => h.0 as usize,
         Err(e) => {
             logf!("dinput: GetModuleHandleW failed: {e}");
             return;
         }
     };
 
-    unsafe {
-        let mut raw: *mut c_void = std::ptr::null_mut();
-        match DirectInput8Create(hinst, 0x0800, &IDirectInput8A::IID, &mut raw, None) {
-            Ok(()) if !raw.is_null() => {
-                let di = IDirectInput8A::from_raw(raw);
-                let mut dev: Option<IDirectInputDevice8A> = None;
-                match di.CreateDevice(&GUID_SysKeyboard, &mut dev, None) {
-                    Ok(()) => {
-                        if let Some(dev) = dev.as_ref() {
-                            logf!("dinput: ANSI device patched: {}", patch_device(dev.as_raw(), 0));
-                        }
-                    }
-                    Err(e) => logf!("dinput: CreateDevice (ANSI) failed: {e}"),
-                }
+    let mut addrs: Vec<usize> = Vec::new();
+    for guid in [&GUID_SysKeyboard, &GUID_SysMouse] {
+        if let Some(addr) = unsafe { probe_get_device_state(create, hinstance, guid) } {
+            if !addrs.contains(&addr) {
+                addrs.push(addr);
             }
-            Ok(()) => logf!("dinput: DirectInput8Create (ANSI) returned null"),
-            Err(e) => logf!("dinput: DirectInput8Create (ANSI) failed: {e}"),
         }
+    }
 
-        let mut raw: *mut c_void = std::ptr::null_mut();
-        match DirectInput8Create(hinst, 0x0800, &IDirectInput8W::IID, &mut raw, None) {
-            Ok(()) if !raw.is_null() => {
-                let di = IDirectInput8W::from_raw(raw);
-                let mut dev: Option<IDirectInputDevice8W> = None;
-                match di.CreateDevice(&GUID_SysKeyboard, &mut dev, None) {
-                    Ok(()) => {
-                        if let Some(dev) = dev.as_ref() {
-                            logf!("dinput: Unicode device patched: {}", patch_device(dev.as_raw(), 1));
-                        }
-                    }
-                    Err(e) => logf!("dinput: CreateDevice (Unicode) failed: {e}"),
-                }
+    for addr in addrs {
+        let hook = unsafe {
+            hook_closure_retn(addr, get_device_state_hook, CallbackOption::None, HookFlags::empty())
+        };
+        match hook {
+            // Dropping the hook point would remove the hook.
+            Ok(point) => {
+                std::mem::forget(point);
+                logf!("dinput: GetDeviceState hooked");
             }
-            Ok(()) => logf!("dinput: DirectInput8Create (Unicode) returned null"),
-            Err(e) => logf!("dinput: DirectInput8Create (Unicode) failed: {e}"),
+            Err(e) => logf!("dinput: GetDeviceState hook failed: {e:?}"),
         }
     }
 }

@@ -15,6 +15,7 @@ use hudhook::{
 use crate::{
     config::{Config, SYMBOL_COUNT, key_name},
     game::{self, Cam, dot},
+    input,
     logf,
     state::{DISABLED, KeyTarget, MENU_OPEN, shared},
 };
@@ -370,6 +371,11 @@ impl ImguiRenderLoop for Overlay {
         let io = ctx.io_mut();
         io.mouse_draw_cursor = open;
         io.config_flags.set(ConfigFlags::NAV_ENABLE_KEYBOARD, open);
+        if open {
+            // The game task does not run on every screen, so the block is refreshed here too.
+            input::hold_game_input();
+            input::release_cursor();
+        }
     }
 
     fn render(&mut self, ui: &mut Ui) {

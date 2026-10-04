@@ -5,9 +5,9 @@ A native DLL for Elden Ring 1.17.1 (`eldenring.exe` 2.7.1.0) that adds two thing
 - **World marker.** Press `V` and a badge with a symbol appears at the point the camera looks at. It stays for a few seconds and is drawn in the game world, not on the map. Players in the same Seamless Co-op session see it too, as long as they run this mod.
 - **Quick use.** Press `1` near an item on the ground: the mod picks it up and uses it right away instead of leaving it in the inventory.
 
-All keys can be rebound in the settings window (`F6`) or in `er_ping_marker.ini`.
+All keys can be rebound in the settings window (`F7`) or in `er_ping_marker.ini`.
 
-> Status: version 0.1.0 builds and loads without missing dependencies, but it has not been tested in a running game yet. See "Known limits".
+> Status: version 0.1.0 loads in the game, the overlay works and `V` places a marker. Co-op delivery, quick use and the input block of the settings window have not been confirmed yet. See "Known limits".
 
 ## Install
 
@@ -39,7 +39,7 @@ On the first start the mod writes `er_ping_marker.ini` and `er_ping_marker.log` 
 |---|---|---|
 | Place a marker | `V` | `PingKey` |
 | Pick up and use | `1` | `QuickUseKey` |
-| Settings window | `F6` | `MenuKey` |
+| Settings window | `F7` | `MenuKey` |
 
 To rebind in the game: open the settings window, click the button with the key name, press the new key. `Esc` cancels. Mouse buttons 3 to 5 work as well.
 
@@ -77,7 +77,8 @@ Game structures come from [fromsoftware-rs](https://github.com/vswarte/fromsoftw
 
 ## Known limits
 
-- Not tested in a running game. Marker placement, the network part and quick use may need fixes; send the log if something is off.
+- Confirmed in the game: loading, the overlay, placing a marker with `V`. Not confirmed: the network part, quick use and the input block of the settings window (it was reworked after the first test); send the log if something is off.
+- The settings window blocks keyboard and mouse. Gamepad input may still reach the game.
 - Co-op was written against Seamless Co-op and has not been tried with a second player.
 - Quick use depends on the keyboard bindings above and does nothing for gamepad-only setups.
 - Several overlays hooking the same swap chain (frame generation mods, HUD mods) can conflict. If the game does not start with this DLL, remove it from the profile and check the log.
@@ -106,9 +107,9 @@ MIT, see `LICENSE`.
 - **Метка в мире.** По `V` в точке, куда смотрит камера, появляется значок с символом. Он держится несколько секунд и рисуется прямо в игре, а не на карте. Его видят и другие игроки сессии Seamless Co-op, если у них стоит этот же мод.
 - **Быстрое использование.** По `1` рядом с лежащим предметом мод подбирает его и сразу применяет, не оставляя в инвентаре.
 
-Клавиши меняются в окне настроек (`F6`) или в `er_ping_marker.ini`.
+Клавиши меняются в окне настроек (`F7`) или в `er_ping_marker.ini`.
 
-> Состояние: версия 0.1.0 собирается и не требует сторонних библиотек, но в запущенной игре ещё не проверялась.
+> Состояние: версия 0.1.0 загружается в игре, оверлей работает, `V` ставит метку. Доставка меток в коопе, быстрое использование и блокировка ввода в окне настроек пока не подтверждены.
 
 ## Установка
 
@@ -130,7 +131,7 @@ MIT, see `LICENSE`.
 |---|---|---|
 | Поставить метку | `V` | `PingKey` |
 | Подобрать и применить | `1` | `QuickUseKey` |
-| Окно настроек | `F6` | `MenuKey` |
+| Окно настроек | `F7` | `MenuKey` |
 
 Чтобы переназначить клавишу в игре, откройте окно настроек, нажмите кнопку с названием клавиши и затем новую клавишу. `Esc` отменяет ввод.
 
@@ -140,7 +141,8 @@ MIT, see `LICENSE`.
 
 ## Ограничения
 
-- В игре не проверено: положение метки, сеть и быстрое использование могут потребовать правок. Если что-то работает не так, пришлите лог.
+- В игре подтверждено: загрузка, оверлей, постановка метки по `V`. Не подтверждено: сеть, быстрое использование и блокировка ввода в окне настроек (её переделали после первой проверки). Если что-то работает не так, пришлите лог.
+- Окно настроек блокирует клавиатуру и мышь. Ввод с геймпада может доходить до игры.
 - Сетевая часть написана под Seamless Co-op и со вторым игроком не испытывалась. Метки видят только игроки с модом.
 - Если метки отражены слева направо, включите `MirrorX`.
 - Несколько оверлеев на одной цепочке кадров (генерация кадров, моды интерфейса) могут конфликтовать. Если игра не запускается, уберите DLL из профиля и посмотрите лог.
