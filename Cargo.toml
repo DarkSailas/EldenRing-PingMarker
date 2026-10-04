@@ -1,0 +1,17 @@
+[package]
+name = "er_ping_marker"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+eldenring = { git = "https://github.com/vswarte/fromsoftware-rs", rev = "59fbd3b3b7daaf14aca47c9f73530493dba6bc79" }
+fromsoftware-shared = { git = "https://github.com/vswarte/fromsoftware-rs", rev = "59fbd3b3b7daaf14aca47c9f73530493dba6bc79" }
+hudhook = { version = "0.9.3", default-features = false, features = ["dx12"] }
+
+[profile.release]
+opt-level = 2
+lto = true
+strip = true

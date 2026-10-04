@@ -1,0 +1,7 @@
+target/
+*.log
+*.pdb
+
+.vs/
+.vscode/
+.idea/

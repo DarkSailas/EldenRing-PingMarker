@@ -1,0 +1,10 @@
+[build]
+target = "x86_64-pc-windows-gnu"
+
+# imgui is C++; without this the DLL depends on libstdc++-6.dll, which the game does not ship.
+[target.x86_64-pc-windows-gnu]
+rustflags = ["-C", "target-feature=+crt-static", "-C", "link-arg=-static"]
+
+# Read by the cc crate when it emits the link directive for the C++ runtime.
+[env]
+CXXSTDLIB = "static:-bundle=stdc++"
