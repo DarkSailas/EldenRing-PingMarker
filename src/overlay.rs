@@ -245,6 +245,8 @@ impl Overlay {
 
         ui.window(format!("{}###er_ping_marker", t("Метки и быстрое применение", "Ping marker and quick use")))
             .size([470.0, 600.0], Condition::FirstUseEver)
+            .position([ui.io().display_size[0] * 0.5, 24.0], Condition::FirstUseEver)
+            .position_pivot([0.5, 0.0])
             .opened(&mut open)
             .build(|| {
                 if self.cyrillic {
@@ -374,8 +376,8 @@ impl ImguiRenderLoop for Overlay {
         if open {
             // The game task does not run on every screen, so the block is refreshed here too.
             input::hold_game_input();
-            input::release_cursor();
         }
+        input::cursor_frame(open);
     }
 
     fn render(&mut self, ui: &mut Ui) {

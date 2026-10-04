@@ -42,6 +42,11 @@ Current method:
 2. Inline hook (ilhook) on the code of `GetDeviceState`, address taken from vtable slot 9 of throwaway keyboard and mouse devices. The buffer is zeroed only for sizes 256, 16 and 20, so other devices are untouched.
 3. Window messages swallowed, cursor drawn by ImGui.
 4. `ClipCursor(NULL)` every frame while the window is open.
+5. Since 0.1.1: inline hooks (ilhook) on `SetCursorPos` and `ClipCursor` in user32. With methods 1 to 4 alone the mouse barely moved in the window: the game recentres the cursor every frame and the two fought. While the window is open both calls from the game return success without doing anything; the last clip rectangle the game asked for is kept and put back when the window closes. The mod's own `ClipCursor` calls pass through a flag.
+
+The settings window opens at the top centre of the screen (0.1.1).
+
+Overlay start: two hudhook overlays initialising together crash the game in `sl.interposer.dll` (Streamline, shipped with ERSS-FG). Since 0.1.1 `Hudhook::apply()` runs under the named mutex `Local\er_overlay_hook_init`, held 500 ms longer; `er_status_bars` uses the same name.
 
 Gamepad coverage is unknown.
 
@@ -53,7 +58,7 @@ Gamepad coverage is unknown.
 4. Quick-slot swap: whether the game accepts the temporary item and the restore.
 5. Cursor-visible heuristic for "a game menu is open".
 6. Coexistence with other Present hooks: worked with PostureBarMod, ERSS-FG and spellwheel; VisualAtmosphere now adds one more and that set has not been run.
-7. The reworked input block: character and camera must stay still, the mouse must work inside the window.
+7. The reworked input block, cursor hooks of 0.1.1 included: character and camera must stay still, the mouse must move freely inside the window.
 8. Anything with a second player.
 
 ## Next step

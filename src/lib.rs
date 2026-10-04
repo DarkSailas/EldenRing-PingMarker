@@ -21,7 +21,13 @@ use fromsoftware_shared::SharedTaskImpExt;
 use hudhook::{
     Hudhook,
     hooks::dx12::ImguiDx12Hooks,
-    windows::Win32::Foundation::{HINSTANCE, HMODULE},
+    windows::{
+        Win32::{
+            Foundation::{CloseHandle, HINSTANCE, HMODULE},
+            System::Threading::{CreateMutexW, ReleaseMutex, WaitForSingleObject},
+        },
+        core::w,
+    },
 };
 
 use crate::state::{DISABLED, MENU_OPEN};
@@ -63,16 +69,39 @@ fn init(module: usize) {
     logf!("init: game task registered");
 
     input::install_dinput_block();
+    input::install_cursor_block();
 
-    let hooks = Hudhook::builder()
-        .with::<ImguiDx12Hooks>(overlay::Overlay::new())
-        .with_hmodule(HINSTANCE(module as _))
-        .build()
-        .apply();
+    let hooks = with_overlay_lock(|| {
+        Hudhook::builder()
+            .with::<ImguiDx12Hooks>(overlay::Overlay::new())
+            .with_hmodule(HINSTANCE(module as _))
+            .build()
+            .apply()
+    });
     match hooks {
         Ok(()) => logf!("init: overlay hooked"),
         Err(e) => logf!("init: overlay hook failed: {e:?}"),
     }
+}
+
+/// Every hudhook overlay probes Direct3D with a throwaway device and then patches the same swap
+/// chain functions. Two mods doing that at the same moment crash Streamline (sl.interposer.dll),
+/// so overlays take turns through a mutex shared by name. A mod that is alone gets it at once.
+fn with_overlay_lock<T>(f: impl FnOnce() -> T) -> T {
+    let mutex = unsafe { CreateMutexW(None, false, w!("Local\\er_overlay_hook_init")) }.ok();
+    if let Some(mutex) = mutex {
+        unsafe { WaitForSingleObject(mutex, 60_000) };
+    }
+    let out = f();
+    // Let the new hooks see a few frames before the next overlay starts patching.
+    std::thread::sleep(Duration::from_millis(500));
+    if let Some(mutex) = mutex {
+        unsafe {
+            let _ = ReleaseMutex(mutex);
+            let _ = CloseHandle(mutex);
+        }
+    }
+    out
 }
 
 #[unsafe(no_mangle)]

@@ -7,7 +7,7 @@ A native DLL for Elden Ring 1.17.1 (`eldenring.exe` 2.7.1.0) that adds two thing
 
 All keys can be rebound in the settings window (`F7`) or in `er_ping_marker.ini`.
 
-> Status: version 0.1.0 loads in the game, the overlay works and `V` places a marker. Co-op delivery, quick use and the input block of the settings window have not been confirmed yet. See "Known limits".
+> Status: version 0.1.1 loads in the game, the overlay works and `V` places a marker. Co-op delivery, quick use and the input block of the settings window (reworked in 0.1.1: the game can no longer move or lock the cursor while the window is open) have not been confirmed yet. See "Known limits".
 
 ## Install
 
@@ -109,7 +109,7 @@ MIT, see `LICENSE`.
 
 Клавиши меняются в окне настроек (`F7`) или в `er_ping_marker.ini`.
 
-> Состояние: версия 0.1.0 загружается в игре, оверлей работает, `V` ставит метку. Доставка меток в коопе, быстрое использование и блокировка ввода в окне настроек пока не подтверждены.
+> Состояние: версия 0.1.1 загружается в игре, оверлей работает, `V` ставит метку. Доставка меток в коопе, быстрое использование и блокировка ввода в окне настроек (переделана в 0.1.1: пока окно открыто, игра не может двигать и запирать курсор) пока не подтверждены.
 
 ## Установка
 

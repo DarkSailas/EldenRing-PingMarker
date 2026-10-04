@@ -1,6 +1,9 @@
 use std::{
     collections::VecDeque,
-    sync::atomic::{AtomicBool, Ordering},
+    sync::{
+        Mutex,
+        atomic::{AtomicBool, Ordering},
+    },
     time::{Duration, Instant},
 };
 
@@ -8,6 +11,7 @@ use eldenring::fd4::FD4PadManager;
 use fromsoftware_shared::FromStatic;
 use hudhook::windows::{
     Win32::{
+        Foundation::RECT,
         Devices::HumanInterfaceDevice::{GUID_SysKeyboard, GUID_SysMouse, IDirectInput8W},
         System::LibraryLoader::{GetModuleHandleW, GetProcAddress},
         UI::{
@@ -172,9 +176,88 @@ pub fn hold_game_input() {
     }
 }
 
+/// Set while the mod itself calls `ClipCursor`, so its own hook lets the call through.
+static OWN_CURSOR_CALL: AtomicBool = AtomicBool::new(false);
+static CURSOR_WAS_FREE: AtomicBool = AtomicBool::new(false);
+/// The last clip rectangle the game asked for while the settings window was open.
+static GAME_CLIP: Mutex<Option<RECT>> = Mutex::new(None);
+
+fn clip_cursor(rect: Option<*const RECT>) {
+    OWN_CURSOR_CALL.store(true, Ordering::Relaxed);
+    let _ = unsafe { ClipCursor(rect) };
+    OWN_CURSOR_CALL.store(false, Ordering::Relaxed);
+}
+
 /// The game clips the cursor to its window while playing; the settings window needs it free.
-pub fn release_cursor() {
-    let _ = unsafe { ClipCursor(None) };
+/// Called every frame: frees the cursor while the window is open and puts the clip the game
+/// wanted back once it closes.
+pub fn cursor_frame(open: bool) {
+    if open {
+        clip_cursor(None);
+        CURSOR_WAS_FREE.store(true, Ordering::Relaxed);
+    } else if CURSOR_WAS_FREE.swap(false, Ordering::Relaxed) {
+        let rect = GAME_CLIP.lock().unwrap_or_else(|e| e.into_inner()).take();
+        if let Some(rect) = rect {
+            clip_cursor(Some(&rect));
+        }
+    }
+}
+
+fn cursor_blocked() -> bool {
+    MENU_OPEN.load(Ordering::Relaxed) && !OWN_CURSOR_CALL.load(Ordering::Relaxed)
+}
+
+type SetCursorPosFn = unsafe extern "system" fn(u64, u64) -> usize;
+type ClipCursorFn = unsafe extern "system" fn(u64) -> usize;
+
+// SetCursorPos(x, y): the game recentres the cursor every frame, which fights the mouse while
+// the settings window is open.
+fn set_cursor_pos_hook(reg: *mut Registers, original: usize) -> usize {
+    if cursor_blocked() {
+        return 1;
+    }
+    let original: SetCursorPosFn = unsafe { std::mem::transmute(original) };
+    unsafe { original((*reg).rcx, (*reg).rdx) }
+}
+
+// ClipCursor(rect): swallowed while the window is open, the rectangle is kept for later.
+fn clip_cursor_hook(reg: *mut Registers, original: usize) -> usize {
+    let rect = unsafe { (*reg).rcx };
+    if cursor_blocked() {
+        let wanted = (rect != 0).then(|| unsafe { *(rect as *const RECT) });
+        *GAME_CLIP.lock().unwrap_or_else(|e| e.into_inner()) = wanted;
+        return 1;
+    }
+    let original: ClipCursorFn = unsafe { std::mem::transmute(original) };
+    unsafe { original(rect) }
+}
+
+pub fn install_cursor_block() {
+    let Ok(user32) = (unsafe { GetModuleHandleW(w!("user32.dll")) }) else {
+        logf!("cursor: user32.dll is not loaded");
+        return;
+    };
+    let targets: [(_, fn(*mut Registers, usize) -> usize); 2] = [
+        (s!("SetCursorPos"), set_cursor_pos_hook),
+        (s!("ClipCursor"), clip_cursor_hook),
+    ];
+    for (name, callback) in targets {
+        let Some(f) = (unsafe { GetProcAddress(user32, name) }) else {
+            logf!("cursor: export not found");
+            continue;
+        };
+        let hook = unsafe {
+            hook_closure_retn(f as usize, callback, CallbackOption::None, HookFlags::empty())
+        };
+        match hook {
+            // Dropping the hook point would remove the hook.
+            Ok(point) => {
+                std::mem::forget(point);
+                logf!("cursor: user32 call hooked");
+            }
+            Err(e) => logf!("cursor: hook failed: {e:?}"),
+        }
+    }
 }
 
 const DIRECTINPUT_VERSION: u32 = 0x0800;
