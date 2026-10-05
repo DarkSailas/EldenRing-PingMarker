@@ -9,7 +9,7 @@ mod state;
 use std::{
     ffi::c_void,
     panic::{AssertUnwindSafe, catch_unwind},
-    sync::atomic::Ordering,
+    sync::atomic::{AtomicBool, Ordering},
     time::Duration,
 };
 
@@ -32,6 +32,11 @@ use hudhook::{
 
 use crate::state::{DISABLED, MENU_OPEN};
 
+/// Set by the first run of the game task: the game loop is going.
+static GAME_LOOP_RUNNING: AtomicBool = AtomicBool::new(false);
+/// How long the game loop has to run before the overlay touches Direct3D.
+const OVERLAY_START_DELAY: Duration = Duration::from_secs(10);
+
 fn init(module: usize) {
     state::set_module(module);
     let ini = state::ini_path();
@@ -53,6 +58,7 @@ fn init(module: usize) {
     let mut game = game::Game::new();
     let handle = cs_task.run_recurring(
         move |_: &FD4TaskData| {
+            GAME_LOOP_RUNNING.store(true, Ordering::Relaxed);
             if DISABLED.load(Ordering::Relaxed) {
                 return;
             }
@@ -71,6 +77,8 @@ fn init(module: usize) {
     input::install_dinput_block();
     input::install_cursor_block();
 
+    wait_for_renderer();
+    logf!("init: the game loop is running, hooking the overlay");
     let hooks = with_overlay_lock(|| {
         Hudhook::builder()
             .with::<ImguiDx12Hooks>(overlay::Overlay::new())
@@ -82,6 +90,17 @@ fn init(module: usize) {
         Ok(()) => logf!("init: overlay hooked"),
         Err(e) => logf!("init: overlay hook failed: {e:?}"),
     }
+}
+
+/// hudhook probes Direct3D with a throwaway device. While the game and Streamline (ERSS-FG) are
+/// still creating their own device and swap chain, that probe crashes sl.common.dll. The task
+/// manager exists before the renderer does, so the overlay waits for the game loop and then for
+/// `OVERLAY_START_DELAY`. The marker has nothing to draw before a save is loaded anyway.
+fn wait_for_renderer() {
+    while !GAME_LOOP_RUNNING.load(Ordering::Relaxed) {
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    std::thread::sleep(OVERLAY_START_DELAY);
 }
 
 /// Every hudhook overlay probes Direct3D with a throwaway device and then patches the same swap

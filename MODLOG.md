@@ -48,6 +48,8 @@ The settings window opens at the top centre of the screen (0.1.1).
 
 Overlay start: two hudhook overlays initialising together crash the game in `sl.interposer.dll` (Streamline, shipped with ERSS-FG). Since 0.1.1 `Hudhook::apply()` runs under the named mutex `Local\er_overlay_hook_init`, held 500 ms longer; `er_status_bars` uses the same name.
 
+2026-10-05: the game died twice at start in `sl.common.dll+0x77C5A`. In the dump this mod's throwaway `D3D12CreateDevice` (hudhook's probe) was running through `sl.interposer.dll` while a game thread was inside `CreateSwapChain` in Streamline. `CSTaskImp` exists before the renderer, so the probe ran during the game's own Direct3D setup. Since 0.1.2 `wait_for_renderer()` waits for the first run of the game task and 10 s more before `Hudhook::apply()`; `er_status_bars` 0.3.1 does the same. Details: gotcha 6 in the MODLOG of `er_status_bars`.
+
 Gamepad coverage is unknown.
 
 ## Not verified (needs the running game)
@@ -60,6 +62,7 @@ Gamepad coverage is unknown.
 6. Coexistence with other Present hooks: worked with PostureBarMod, ERSS-FG and spellwheel; VisualAtmosphere now adds one more and that set has not been run.
 7. The reworked input block, cursor hooks of 0.1.1 included: character and camera must stay still, the mouse must move freely inside the window.
 8. Anything with a second player.
+9. That 0.1.2 starts: no launch has been made since the start-up fix.
 
 ## Next step
 
